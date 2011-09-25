@@ -61,6 +61,7 @@ enum BinDataSubType : ubyte
     userDefined = 0x80   ///
 }
 
+
 struct Document
 {
   private:
@@ -276,6 +277,9 @@ struct Element
     {
         immutable(ubyte[]) value()
         {
+            if (isEod)
+                return null;
+
             return data_[1 + rawKeySize..size];
         }
 
@@ -449,8 +453,7 @@ struct Element
         }        
     }
 
-    // TODO: Add more BSON specified type accessors
-    // DBPointer, codeWScope, binData, etc...
+    // TODO: Add more BSON specified type accessors, e.g.  binData
 
     @property @trusted const nothrow
     {
@@ -671,7 +674,7 @@ struct Element
     }
 }
 
-import std.stdio;
+
 unittest
 {
     struct ETest
@@ -681,6 +684,8 @@ unittest
         string  key;
         ubyte[] value;
         bool    isTrue;
+        bool    isNumber;
+        bool    isSimple;
     }
 
     Element test(ref const ETest set, string msg)
@@ -694,13 +699,21 @@ unittest
         assert(elem.value     == set.value,        amsg);
         assert(elem.valueSize == set.value.length, amsg);
         assert(elem.isTrue    == set.isTrue,       amsg);
+        assert(elem.isNumber  == set.isNumber,     amsg);
+        assert(elem.isSimple  == set.isSimple,     amsg);
 
         return elem;
     }
 
+    { // EOD element
+        ubyte[] data = [];
+        ETest   set  = ETest(data, Type.eod, null, null, false, false, false);
+
+        assert(test(set, "EOD").isEod);
+    }
     { // {"hello": "world"} elemement
         ubyte[] data = [0x02, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x00, 0x06, 0x00, 0x00, 0x00, 0x77, 0x6F, 0x72, 0x6C, 0x64, 0x00, 0x00, 0x1f];
-        auto    set  = ETest(data, Type.string, "hello", data[7..$ - 2], true);
+        auto    set  = ETest(data, Type.string, "hello", data[7..$ - 2], true, false, true);
         auto    elem = test(set, "UTF8 string");
 
         assert(elem.str  == "world");
@@ -711,26 +724,26 @@ unittest
 
     { // {"k": false} elemement
         ubyte[] data = [0x08, 0x6b, 0x00, 0x00];
-        ETest   set  = ETest(data, Type.boolean, "k", data[keyOffset..$], false);
+        ETest   set  = ETest(data, Type.boolean, "k", data[keyOffset..$], false, false, true);
 
         assert(!test(set, "Boolean false").get!bool);
     }
     { // {"k": true} elemement
         ubyte[] data = [0x08, 0x6b, 0x00, 0x01];
-        ETest   set  = ETest(data, Type.boolean, "k", data[keyOffset..$], true);
+        ETest   set  = ETest(data, Type.boolean, "k", data[keyOffset..$], true, false, true);
 
         assert(test(set, "Boolean true").get!bool);
     }
     { // {"k": int.max} elemement
         { // true
             ubyte[] data = [0x10, 0x6b, 0x00, 0xff, 0xff, 0xff, 0x7f];
-            ETest   set  = ETest(data, Type.int32, "k", data[keyOffset..$], true);
+            ETest   set  = ETest(data, Type.int32, "k", data[keyOffset..$], true, true, true);
 
             assert(test(set, "32bit integer").get!int == int.max);
         }
         { // false
             ubyte[] data = [0x10, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00];
-            ETest   set  = ETest(data, Type.int32, "k", data[keyOffset..$], false);
+            ETest   set  = ETest(data, Type.int32, "k", data[keyOffset..$], false, true, true);
 
             assert(test(set, "32bit integer").get!int == 0);
         }
@@ -738,13 +751,13 @@ unittest
     { // {"k": long.min} elemement
         { // true
             ubyte[] data = [0x12, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80];
-            ETest   set  = ETest(data, Type.int64, "k", data[keyOffset..$], true);
+            ETest   set  = ETest(data, Type.int64, "k", data[keyOffset..$], true, true, true);
 
             assert(test(set, "64bit integer").get!long == long.min);
         }
         { // false
             ubyte[] data = [0x12, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-            ETest   set  = ETest(data, Type.int64, "k", data[keyOffset..$], false);
+            ETest   set  = ETest(data, Type.int64, "k", data[keyOffset..$], false, true, true);
 
             assert(test(set, "64bit integer").get!long == 0);
         }
@@ -752,13 +765,13 @@ unittest
     { // {"k": 10000.0} elemement
         { // true
             ubyte[] data = [0x01, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0xc3, 0x40];
-            ETest   set  = ETest(data, Type.numberDouble, "k", data[keyOffset..$], true);
+            ETest   set  = ETest(data, Type.numberDouble, "k", data[keyOffset..$], true, true, true);
 
             assert(test(set, "Floating point").get!double == 10000.0f);
         }
         { // false
             ubyte[] data = [0x01, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-            ETest   set  = ETest(data, Type.numberDouble, "k", data[keyOffset..$], false);
+            ETest   set  = ETest(data, Type.numberDouble, "k", data[keyOffset..$], false, true, true);
 
             assert(test(set, "Floating point").get!double == 0.0f);
         }
@@ -767,20 +780,20 @@ unittest
         immutable time = 1316968892700L;
         {
             ubyte[] data = [0x09, 0x6b, 0x00, 0x1c, 0x89, 0x76, 0xa1, 0x32, 0x01, 0x00, 0x00];
-            ETest   set  = ETest(data, Type.date, "k", data[keyOffset..$], true);
+            ETest   set  = ETest(data, Type.date, "k", data[keyOffset..$], true, false, true);
 
             assert(test(set, "Date").get!Date == cast(Date)SysTime(time));
         }
         {
             ubyte[] data = [0x11, 0x6b, 0x00, 0x1c, 0x89, 0x76, 0xa1, 0x32, 0x01, 0x00, 0x00];
-            ETest   set  = ETest(data, Type.timestamp, "k", data[keyOffset..$], true);
+            ETest   set  = ETest(data, Type.timestamp, "k", data[keyOffset..$], true, false, false);
 
             assert(test(set, "Timestamp").get!DateTime == cast(DateTime)SysTime(time));
         }
     }
     { // {"k": ObjectId(...)} elemement
         ubyte[]  data = [0x07, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0xff];
-        ETest    set  = ETest(data, Type.oid, "k", data[keyOffset..$], true);
+        ETest    set  = ETest(data, Type.oid, "k", data[keyOffset..$], true, false, true);
 
         assert(test(set, "ObjectId").get!ObjectId == ObjectId(long.min, uint.max));
     }
