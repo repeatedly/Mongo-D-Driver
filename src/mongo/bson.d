@@ -19,6 +19,7 @@ module mongo.bson;
 
 import core.stdc.string;  // Some operations in Phobos not safe, pure and nothrow, e.g. cmp
 
+import std.algorithm;
 import std.conv;
 import std.exception;  // assumeUnique
 import std.datetime;   // Date, DateTime
@@ -62,38 +63,121 @@ enum BinDataSubType : ubyte
 }
 
 
+/**
+ * BSON document representation, which is called "BSONObj" in C++.
+ */
 struct Document
 {
   private:
-    ubyte[] data_;
+    immutable ubyte[] data_;
 
 
   public:
-    @property
+    @safe
+    nothrow this(immutable ubyte[] data)
     {
+        data_ = data;
+    }
+
+
+    @property nothrow pure const
+    {
+        @safe
         bool empty()
         {
             return data_.length < 5;
         }
 
 
+        @trusted
         size_t size()
         {
-            return 0;
+            return *cast(size_t*)(data_[0..4].ptr);
         }
         alias size length;
     }
 
 
-    string[] getFieldNames()
+    struct Range
     {
-        return null;
+      private:
+        immutable ubyte[] data_;
+        size_t            index_;
+        Element           element_;
+
+
+      public:
+        @safe
+        this(immutable ubyte[] data)
+        {
+            data_ = data;
+
+            if (data.length == 0) {
+                index_ = 0;
+            } else {
+                index_ = 4;
+                popFront();
+            }
+        }
+
+
+        @property @safe
+        nothrow bool empty() const
+        {
+            return index_ >= data_.length;
+        }
+
+
+        /**
+         * InputRange primitive operation that returns the currently iterated element.
+         */
+        @property @safe
+        nothrow Element front() const
+        {
+            return element_;
+        }
+
+
+        /**
+         * InputRange primitive operation that advances the range to its next element.
+         */
+        @trusted
+        void popFront()
+        {
+            import std.conv;
+
+            emplace!Element(&element_, data_[index_..$]);
+            index_ += element_.size;
+        }
     }
 
 
-    Element opIndex(in string name)
+    @property @trusted
+    string[] keys() const
     {
-        return Element();
+        import std.array;
+
+        return array(map!"a.key"(Range(data_)));
+    }
+
+
+    @trusted const
+    {
+        bool hasElement(in string key)
+        {
+            return !opIndex(key).isEod();
+        }
+
+
+        Element opIndex(in string key)
+        {
+            foreach (ref element; Range(data_)) {
+                if (element.key == key)
+                    return element;
+            }
+
+            return Element();
+        }
     }
 
 
@@ -106,6 +190,44 @@ struct Document
     int opCmp(ref const Document other) const
     {
         return 0;
+    }
+
+
+    @safe
+    string toString() const
+    {
+        if (empty)
+            return "{}";
+
+        return "";
+    }
+}
+
+
+unittest
+{
+    // {foo: "bar", bool: true, num: 10}
+    immutable ubyte[] data = [0x22, 0x00, 0x00, 0x00, 0x02, 0x66, 0x6f, 0x6f, 0x00, 0x04, 0x00, 0x00, 0x00, 0x62, 0x61, 0x72, 0x00,
+                              0x08, 0x62, 0x6f, 0x6f, 0x6c, 0x00, 0x01, 0x10, 0x6e, 0x75, 0x6d, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00];
+    auto doc = Document(data);
+
+    { // hasElement
+        assert(doc.hasElement("bool"));
+        assert(doc.hasElement("foo"));
+        assert(doc.hasElement("num"));
+    }
+    { // keys
+        assert(doc.keys == ["foo", "bool", "num"]);
+    }
+    { // opIndex([])
+        auto strElem = doc["foo"];
+        assert(strElem.str == "bar");
+
+        auto numElem = doc["num"];
+        assert(numElem.get!int == 10);
+
+        auto boolElem = doc["bool"];
+        assert(boolElem.get!bool);
     }
 }
 
@@ -216,6 +338,7 @@ struct Element
         byte canonicalType()
         {
             Type t = type;
+
             final switch (t) {
             case Type.minKey, Type.maxKey:
                 return t;
@@ -295,6 +418,7 @@ struct Element
     size_t size() const pure nothrow
     {
         size_t s;
+
         final switch (type) {
         case Type.minKey, Type.maxKey, Type.eod, Type.undefined, Type.nil:
             break;
