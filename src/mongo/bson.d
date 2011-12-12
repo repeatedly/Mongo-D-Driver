@@ -879,7 +879,9 @@ int compareValue(ref const Element lhs, ref const Element rhs) pure nothrow
 
         if (r != 0)
             return r;
-        return ls - rs;
+        if (ls < rs)
+            return -1;
+        return ls == rs ? 0 : 1;
     case Type.embedded,  Type.array:
         // TODO
         return 0;
@@ -888,7 +890,7 @@ int compareValue(ref const Element lhs, ref const Element rhs) pure nothrow
         immutable rs = rhs.bodySize;
 
         if ((ls - rs) != 0)
-            return ls - rs;
+            return ls - rs < 0 ? -1 : 1;
         return memcmp(lhs.value[4..$].ptr, rhs.value[4..$].ptr, ls + 1);  // +1 for subtype
     case Type.oid:
         return memcmp(lhs.value.ptr, rhs.value.ptr, 12);
@@ -916,7 +918,7 @@ int compareValue(ref const Element lhs, ref const Element rhs) pure nothrow
         immutable rs = rhs.valueSize;
 
         if ((ls - rs) != 0)
-            return ls - rs;
+            return ls - rs < 0 ? -1 : 1;
         return memcmp(lhs.str.ptr, rhs.str.ptr, ls);
     case Type.codeWScope:
         auto r = lhs.canonicalType - rhs.canonicalType;
@@ -1069,7 +1071,7 @@ struct ObjectId
     @trusted
     shared static this()
     {
-        import std.md5;  // Will be replaced with std.digest
+        import std.md5;  // TODO: Will be replaced with std.digest
         import std.socket;
 
         ubyte[16] digest;
