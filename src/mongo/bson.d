@@ -121,20 +121,21 @@ struct Document
         }
 
 
-        @property @safe
-        nothrow bool empty() const
+        @property @safe nothrow const
         {
-            return index_ >= data_.length;
-        }
+            bool empty()
+            {
+                return index_ >= data_.length;
+            }
 
 
-        /**
-         * InputRange primitive operation that returns the currently iterated element.
-         */
-        @property @safe
-        nothrow Element front() const
-        {
-            return element_;
+            /**
+             * InputRange primitive operation that returns the currently iterated element.
+             */
+            ref const(Element) front()
+            {
+                return element_;
+            }
         }
 
 
@@ -152,6 +153,12 @@ struct Document
     }
 
 
+    Range opSlice()
+    {
+        return Range(data_);
+    }
+
+
     @property @trusted
     string[] keys() const
     {
@@ -163,6 +170,7 @@ struct Document
 
     @trusted const
     {
+        // TODO: Replace with opIn?
         bool hasElement(in string key)
         {
             return !opIndex(key).isEod();
@@ -215,6 +223,11 @@ unittest
         assert(doc.hasElement("bool"));
         assert(doc.hasElement("foo"));
         assert(doc.hasElement("num"));
+        assert(!doc.hasElement("missing"));
+    }
+    { // opSlice
+        auto range = doc[];
+        assert(count(range) == 3);
     }
     { // keys
         assert(doc.keys == ["foo", "bool", "num"]);
